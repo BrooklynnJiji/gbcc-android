@@ -10,12 +10,12 @@ base {
 }
 
 android {
-	compileSdk = 33
-	buildToolsVersion = "33.0.0"
+	compileSdk = 34
+	buildToolsVersion = "34.0.0"
 	defaultConfig {
 		applicationId = "com.philj56.gbcc"
 		minSdk = 21
-		targetSdk = 33
+		targetSdk = 34
 		versionCode = 41
 		versionName = "beta41"
 		testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -26,13 +26,10 @@ android {
 		}
 		ndk {
 			debugSymbolLevel = "FULL"
+			// This line specifies the CPU architectures to build for, fixing the error.
+			abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
 		}
-		splits {
-			abi {
-				isEnable = true
-				isUniversalApk = true
-			}
-		}
+		// The outdated 'splits' block has been removed from here.
 	}
 	buildTypes {
 		release {
@@ -57,7 +54,7 @@ android {
 			path("src/main/cpp/CMakeLists.txt")
 		}
 	}
-	
+
 	compileOptions {
 		sourceCompatibility = JavaVersion.VERSION_17
 		targetCompatibility = JavaVersion.VERSION_17

@@ -72,6 +72,10 @@ private const val PRINTER_CLEAR_MILLIS = 800L
 private const val PRINTER_SCROLL_MILLIS = 300L
 private const val PRINTER_UPDATE_SAMPLES = 17000
 
+// --- Step Counter Constants ---
+private const val STEPS_TAG = "GLActivitySteps"
+private const val STEPS_PER_POINT = 3 // NEW: Changed name for clarity
+
 private const val BUTTON_CODE_A = 0
 private const val BUTTON_CODE_B = 1
 private const val BUTTON_CODE_START = 2
@@ -82,22 +86,22 @@ private const val BUTTON_CODE_LEFT = 6
 private const val BUTTON_CODE_RIGHT = 7
 
 private val KEYCODE_TO_STRING_MAP = mapOf(
-        KeyEvent.KEYCODE_BUTTON_A to "button_map_a",
-        KeyEvent.KEYCODE_BUTTON_B to "button_map_b",
-        KeyEvent.KEYCODE_BUTTON_X to "button_map_x",
-        KeyEvent.KEYCODE_BUTTON_Y to "button_map_y",
-        KeyEvent.KEYCODE_DPAD_UP to "button_map_up",
-        KeyEvent.KEYCODE_DPAD_DOWN to "button_map_down",
-        KeyEvent.KEYCODE_DPAD_LEFT to "button_map_left",
-        KeyEvent.KEYCODE_DPAD_RIGHT to "button_map_right",
-        KeyEvent.KEYCODE_BUTTON_START to "button_map_start",
-        KeyEvent.KEYCODE_BUTTON_SELECT to "button_map_select",
-        KeyEvent.KEYCODE_BUTTON_L1 to "button_map_l1",
-        KeyEvent.KEYCODE_BUTTON_L2 to "button_map_l2",
-        KeyEvent.KEYCODE_BUTTON_R1 to "button_map_r1",
-        KeyEvent.KEYCODE_BUTTON_R2 to "button_map_r2",
-        KeyEvent.KEYCODE_BUTTON_THUMBL to "button_map_thumbl",
-        KeyEvent.KEYCODE_BUTTON_THUMBR to "button_map_thumbr",
+    KeyEvent.KEYCODE_BUTTON_A to "button_map_a",
+    KeyEvent.KEYCODE_BUTTON_B to "button_map_b",
+    KeyEvent.KEYCODE_BUTTON_X to "button_map_x",
+    KeyEvent.KEYCODE_BUTTON_Y to "button_map_y",
+    KeyEvent.KEYCODE_DPAD_UP to "button_map_up",
+    KeyEvent.KEYCODE_DPAD_DOWN to "button_map_down",
+    KeyEvent.KEYCODE_DPAD_LEFT to "button_map_left",
+    KeyEvent.KEYCODE_DPAD_RIGHT to "button_map_right",
+    KeyEvent.KEYCODE_BUTTON_START to "button_map_start",
+    KeyEvent.KEYCODE_BUTTON_SELECT to "button_map_select",
+    KeyEvent.KEYCODE_BUTTON_L1 to "button_map_l1",
+    KeyEvent.KEYCODE_BUTTON_L2 to "button_map_l2",
+    KeyEvent.KEYCODE_BUTTON_R1 to "button_map_r1",
+    KeyEvent.KEYCODE_BUTTON_R2 to "button_map_r2",
+    KeyEvent.KEYCODE_BUTTON_THUMBL to "button_map_thumbl",
+    KeyEvent.KEYCODE_BUTTON_THUMBR to "button_map_thumbr",
 )
 
 private val ACTION_TO_KEY_MAP = mapOf(
@@ -171,6 +175,15 @@ class GLActivity : BaseActivity(), SensorEventListener {
     private lateinit var printerScrollAnimation : ObjectAnimator
     private var currentScreen = Screen.GAMEBOY
 
+    // --- Step Counter Variables (Point System) ---
+    private var stepCounterSensor: Sensor? = null
+    private var initialStepCount: Float = -1f
+    private var currentStepCount: Float = 0f
+    private var totalStepsInSession: Int = 0
+    private var actionPoints: Int = 0 // NEW: The user's point "bank"
+    private var stepsSinceLastPoint: Int = 0 // NEW: Tracks progress towards the next point
+    // --- End Step Counter Variables ---
+
     private lateinit var binding: ActivityGlBinding
 
     private external fun chdir(dirName: String)
@@ -219,6 +232,28 @@ class GLActivity : BaseActivity(), SensorEventListener {
     private external fun getPrinterStrip(): ByteArray
     private external fun resetPrinter()
 
+
+    // NEW: Wrapper function to handle the point system logic.
+    private fun handleButtonPress(button: Int, isPressed: Boolean) {
+        // Only check/spend points when a button is pressed DOWN. Releasing is free.
+        if (isPressed) {
+            // If the step sensor exists and we have no points, block the action.
+            if (stepCounterSensor != null && actionPoints <= 0) {
+                Log.i(STEPS_TAG, "Input blocked. No action points.")
+                Toast.makeText(this, "No points! Walk to earn points to play.", Toast.LENGTH_SHORT).show()
+                return // VITAL: Block the button press from happening.
+            }
+
+            // If we are here, the action is allowed. Spend a point.
+            if (stepCounterSensor != null) {
+                actionPoints--
+                Log.i(STEPS_TAG, "Action point spent. $actionPoints points remaining.")
+            }
+        }
+
+        // Action is allowed, so call the real external C++ function.
+        press(button, isPressed)
+    }
 
     init {
         checkEmulatorState = Runnable {
@@ -338,7 +373,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
                 when (motionEvent.action) {
                     MotionEvent.ACTION_DOWN -> {
                         if (!button.isPressed) {
-                            press(button.id, true)
+                            handleButtonPress(button.id, true)
                         }
                         button.isNormalPressed = true
                         button.view.isPressed = true && animateButtons
@@ -353,7 +388,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
                                 button2.isMotionPressed = false
                             }
                             if (lastPressed && !button2.isPressed) {
-                                press(button2.id, false)
+                                handleButtonPress(button2.id, false)
                                 button2.view.isPressed = false
                                 hapticVibrate(button2.view, false)
                             }
@@ -369,7 +404,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
                                 val pressed = button2.isPressed
                                 if (pressed != lastPressed) {
                                     hapticVibrate(button2.view, pressed)
-                                    press(button2.id, pressed)
+                                    handleButtonPress(button2.id, pressed)
                                     button2.view.isPressed = pressed && animateButtons
                                 }
                             }
@@ -551,6 +586,20 @@ class GLActivity : BaseActivity(), SensorEventListener {
 
         checkFiles()
 
+        // --- Initialize Step Counter ---
+        Log.d(STEPS_TAG, "onCreate: Initializing step counter.")
+        stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+
+        if (stepCounterSensor == null) {
+            Log.e(STEPS_TAG, "Step counter sensor not available on this device!")
+            Toast.makeText(this, "Step counter sensor not available. Point system disabled.", Toast.LENGTH_LONG).show()
+        } else {
+            actionPoints = 0
+            stepsSinceLastPoint = 0
+            Toast.makeText(this, "Walk to earn points to play!", Toast.LENGTH_LONG).show()
+        }
+        // --- End Initialize Step Counter ---
+
         if (savedInstanceState != null) {
             resume = resume || savedInstanceState.getBoolean("resume")
             resumePrinting = resumePrinting || savedInstanceState.getBoolean("resumePrinting")
@@ -706,6 +755,20 @@ class GLActivity : BaseActivity(), SensorEventListener {
         super.onResume()
         binding.screen.onResume()
         startGBCC()
+
+        // --- Register Step Counter Listener ---
+        stepCounterSensor?.also { sensor ->
+            val registered = sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
+            if (registered) {
+                Log.d(STEPS_TAG, "Step counter listener registered successfully.")
+            } else {
+                Log.e(STEPS_TAG, "Failed to register step counter listener.")
+            }
+            // Reset step counting cycle, but NOT the earned points
+            initialStepCount = -1f
+            totalStepsInSession = 0
+            stepsSinceLastPoint = 0
+        }
     }
 
     private fun startGBCC() {
@@ -827,6 +890,13 @@ class GLActivity : BaseActivity(), SensorEventListener {
     override fun onPause() {
         stopGBCC()
         binding.screen.onPause()
+
+        // --- Unregister Step Counter Listener ---
+        stepCounterSensor?.let {
+            sensorManager.unregisterListener(this, it)
+            Log.d(STEPS_TAG, "Step counter listener unregistered.")
+        }
+
         super.onPause()
     }
 
@@ -845,31 +915,70 @@ class GLActivity : BaseActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            if (disableAccelerometer) {
-                return
-            }
-            @Suppress("Deprecation")
-            val rotation =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    display?.rotation ?: Surface.ROTATION_0
-                } else {
-                    windowManager.defaultDisplay.rotation
+        when (event.sensor.type) {
+            Sensor.TYPE_ACCELEROMETER -> {
+                if (disableAccelerometer) {
+                    return
                 }
-            when (rotation) {
-                Surface.ROTATION_0 -> updateAccelerometer(event.values[0], event.values[1])
-                Surface.ROTATION_90 -> updateAccelerometer(-event.values[1], event.values[0])
-                Surface.ROTATION_180 -> updateAccelerometer(-event.values[0], -event.values[1])
-                Surface.ROTATION_270 -> updateAccelerometer(event.values[1], -event.values[0])
+                @Suppress("Deprecation")
+                val rotation =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        display?.rotation ?: Surface.ROTATION_0
+                    } else {
+                        windowManager.defaultDisplay.rotation
+                    }
+                when (rotation) {
+                    Surface.ROTATION_0 -> updateAccelerometer(event.values[0], event.values[1])
+                    Surface.ROTATION_90 -> updateAccelerometer(-event.values[1], event.values[0])
+                    Surface.ROTATION_180 -> updateAccelerometer(-event.values[0], -event.values[1])
+                    Surface.ROTATION_270 -> updateAccelerometer(event.values[1], -event.values[0])
+                }
+            }
+            // --- Step Counter Logic (Point System) ---
+            Sensor.TYPE_STEP_COUNTER -> {
+                val newTotalSteps = event.values[0]
+
+                if (initialStepCount == -1f && newTotalSteps > 0) {
+                    initialStepCount = newTotalSteps
+                    currentStepCount = newTotalSteps
+                    Log.d(STEPS_TAG, "Initial step count set: $initialStepCount.")
+                } else if (initialStepCount != -1f) {
+                    if (newTotalSteps < initialStepCount) {
+                        Log.w(STEPS_TAG, "Step counter appears to have reset. Resetting cycle.")
+                        initialStepCount = newTotalSteps
+                        totalStepsInSession = 0
+                        stepsSinceLastPoint = 0
+                    } else {
+                        currentStepCount = newTotalSteps
+                        val stepsThisSession = (currentStepCount - initialStepCount).toInt()
+
+                        if (stepsThisSession > totalStepsInSession) {
+                            val newSteps = stepsThisSession - totalStepsInSession
+                            stepsSinceLastPoint += newSteps
+                            Log.d(STEPS_TAG, "Detected $newSteps new step(s). Progress to next point: $stepsSinceLastPoint / $STEPS_PER_POINT")
+
+                            while (stepsSinceLastPoint >= STEPS_PER_POINT) {
+                                actionPoints++
+                                stepsSinceLastPoint -= STEPS_PER_POINT
+                                Log.i(STEPS_TAG, "Point earned! Total points: $actionPoints")
+                                Toast.makeText(this, "Point earned! You have $actionPoints points.", Toast.LENGTH_SHORT).show()
+                            }
+                            totalStepsInSession = stepsThisSession
+                        }
+                    }
+                }
             }
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+        Log.d(STEPS_TAG, "Accuracy changed for sensor ${sensor.name} to $accuracy")
+    }
 
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<String>, grantResults: IntArray
     ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (checkCameraPermission()) {
                 startCamera()
@@ -877,7 +986,6 @@ class GLActivity : BaseActivity(), SensorEventListener {
                 cameraPermissionRefused = true
             }
         }
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
     private fun checkCameraPermission() : Boolean {
@@ -943,7 +1051,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
             }
 
             try {
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis)
+                cameraProvider.bindToLifecycle(this as LifecycleOwner, cameraSelector, imageAnalysis)
             } catch (e: IllegalArgumentException) {
                 Toast.makeText(
                     this,
@@ -1140,7 +1248,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
         when (action) {
             "back" -> onBackPressedDispatcher.onBackPressed()
             "turbo" -> if (pressed) toggleTurboWrapper()
-            else -> press(button, pressed)
+            else -> handleButtonPress(button, pressed)
         }
         return true
     }
@@ -1152,24 +1260,24 @@ class GLActivity : BaseActivity(), SensorEventListener {
         val toggledOff = (lastState or dpadState) xor dpadState
 
         if (toggledOn and 1 > 0) {
-            press(BUTTON_CODE_UP, true)
+            handleButtonPress(BUTTON_CODE_UP, true)
         } else if (toggledOff and 1 > 0) {
-            press(BUTTON_CODE_UP, false)
+            handleButtonPress(BUTTON_CODE_UP, false)
         }
         if (toggledOn and 2 > 0) {
-            press(BUTTON_CODE_DOWN, true)
+            handleButtonPress(BUTTON_CODE_DOWN, true)
         } else if (toggledOff and 2 > 0) {
-            press(BUTTON_CODE_DOWN, false)
+            handleButtonPress(BUTTON_CODE_DOWN, false)
         }
         if (toggledOn and 4 > 0) {
-            press(BUTTON_CODE_LEFT, true)
+            handleButtonPress(BUTTON_CODE_LEFT, true)
         } else if (toggledOff and 4 > 0) {
-            press(BUTTON_CODE_LEFT, false)
+            handleButtonPress(BUTTON_CODE_LEFT, false)
         }
         if (toggledOn and 8 > 0) {
-            press(BUTTON_CODE_RIGHT, true)
+            handleButtonPress(BUTTON_CODE_RIGHT, true)
         } else if (toggledOff and 8 > 0) {
-            press(BUTTON_CODE_RIGHT, false)
+            handleButtonPress(BUTTON_CODE_RIGHT, false)
         }
 
         return (toggledOn or toggledOff) > 0
@@ -1179,20 +1287,22 @@ class GLActivity : BaseActivity(), SensorEventListener {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return false
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            val mr = getSystemService(Context.MEDIA_ROUTER_SERVICE) as MediaRouter
-            val deviceType = mr.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_AUDIO).deviceType
-            return deviceType == MediaRouter.RouteInfo.DEVICE_TYPE_BLUETOOTH
-        }
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        val bluetooth = outputs.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
-        val wired = outputs.any {
-            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
-                    || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
+        // For versions between M (23) and R (30), use AudioDeviceInfo
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val bluetooth = outputs.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+            val wired = outputs.any {
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+                        || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
+            }
+            return bluetooth && !wired
         }
 
-        return bluetooth && !wired
+        // For versions S (31) and newer, use MediaRouter
+        val mr = getSystemService(Context.MEDIA_ROUTER_SERVICE) as MediaRouter
+        val deviceType = mr.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_AUDIO).deviceType
+        return deviceType == MediaRouter.RouteInfo.DEVICE_TYPE_BLUETOOTH
     }
 
     private fun toggleTurboWrapper() {
@@ -1283,33 +1393,32 @@ class GLActivity : BaseActivity(), SensorEventListener {
                 return@registerForActivityResult
             }
             Thread {
-                printerByteArray.let {
-                    if (it.isEmpty()) {
-                        return@Thread
+                if (printerByteArray.isEmpty()) {
+                    return@Thread
+                }
+                val width = 160
+                val height = printerByteArray.size / 160
+                val bitmap = Bitmap.createBitmap(
+                    width,
+                    height,
+                    Bitmap.Config.ARGB_8888
+                )
+                // Android fails to export ALPHA_8 bitmaps, so we have to use ARGB_8888
+                // and set each pixel manually.
+                for (x in 0 until width) {
+                    for (y in 0 until height) {
+                        val px = 255 - printerByteArray[y * width + x].toUByte().toInt()
+                        bitmap.setPixel(x, y, Color.argb(255, px, px, px))
                     }
-                    val width = 160
-                    val height = it.size / 160
-                    val bitmap = Bitmap.createBitmap(
-                        width,
-                        height,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    // Android fails to export ALPHA_8 bitmaps, so we have to use ARGB_8888
-                    // and set each pixel manually.
-                    for (x in 0 until width) {
-                        for (y in 0 until height) {
-                            val px = 255 - it[y * width + x].toUByte().toInt()
-                            bitmap.setPixel(x, y, Color.argb(255, px, px, px))
-                        }
-                    }
-                    contentResolver.openOutputStream(uri).use { stream ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-                    }
+                }
+                // Use a safe call to handle the potentially null OutputStream
+                contentResolver.openOutputStream(uri)?.use { stream ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
                 }
             }.start()
         }
         binding.printerSaveButton.setOnClickListener {
-            val date = SimpleDateFormat("yyyy-MM-dd'T'HHmmss").format(Date())
+            val date = SimpleDateFormat("yyyy-MM-dd'T'HHmmss", Locale.US).format(Date())
             printerExport.launch("gbcc_printer_$date.png")
         }
         printerPaperTearSound = SoundPool.Builder()
@@ -1440,7 +1549,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
         val portrait = (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT)
 
         val printoutWidthPX = 160  // Image width in Game boy Pixels
-        val printoutHeightPX = printerByteArray.size / printoutWidthPX
+        val printoutHeightPX = if (printoutWidthPX > 0) printerByteArray.size / printoutWidthPX else 0
         val printoutWidthDP = 128f // Width of printout on paper
         val paperWidthDP = 192f  // Width of paper in printer drawable
         val printerWidthDP = 360f  // Width of printer drawable

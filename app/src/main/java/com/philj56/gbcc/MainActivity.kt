@@ -1,13 +1,3 @@
-/*
- * Copyright (C) 2019-2020 Philip Jones
- *
- * Licensed under the MIT License.
- * See either the LICENSE file, or:
- *
- * https://opensource.org/licenses/MIT
- *
- */
-
 package com.philj56.gbcc
 
 import android.content.ActivityNotFoundException
@@ -85,7 +75,6 @@ class MainActivity : BaseActivity() {
         .setDuration(300)
         .setInterpolator(AccelerateDecelerateInterpolator())
 
-
     override fun onCreate(savedInstanceState: Bundle?) {
         PreferenceManager.setDefaultValues(this, R.xml.preferences, true)
         PreferenceManager.setDefaultValues(this, R.xml.preferences_audio, true)
@@ -126,7 +115,6 @@ class MainActivity : BaseActivity() {
         changeDir(baseDir)
         updateFiles()
 
-        // Check if the version has changed since last launch, and perform some setup if so
         Thread {
             val lastLaunchVersion = filesDir.resolve("lastLaunchVersion")
             if (!lastLaunchVersion.exists()
@@ -150,19 +138,19 @@ class MainActivity : BaseActivity() {
         }.start()
     }
 
+    override fun onResume() {
+        super.onResume()
+        delegate.applyDayNight()
+    }
+
     override fun onPause() {
+        super.onPause()
         supportFragmentManager.fragments.forEach {
             if (it is DialogFragment) {
                 it.dismissAllowingStateLoss()
             }
         }
         clearSelection()
-        super.onPause()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        delegate.applyDayNight()
     }
 
     override fun onContentChanged() {
@@ -225,9 +213,7 @@ class MainActivity : BaseActivity() {
 
     private fun onListItemClick(file: File, view: View) {
         when (selectionMode) {
-            SelectionMode.DELETE -> {
-            }
-            SelectionMode.MOVE -> {
+            SelectionMode.DELETE, SelectionMode.MOVE -> {
                 if (file.isDirectory) {
                     currentDir = file
                     updateFiles()
@@ -255,11 +241,11 @@ class MainActivity : BaseActivity() {
     private fun onListItemLongClick(file: File, view: View) {
         when (selectionMode) {
             SelectionMode.SELECT -> {
-               if (file.isDirectory) {
-                   toggleSelection(file)
-                   view.isActivated = file in fileAdapter.selected
-                   view.invalidateDrawable(view.background)
-               }
+                if (file.isDirectory) {
+                    toggleSelection(file)
+                    view.isActivated = file in fileAdapter.selected
+                    view.invalidateDrawable(view.background)
+                }
             }
             else -> {
                 if (fileAdapter.selected.isEmpty()) {
@@ -461,7 +447,6 @@ class MainActivity : BaseActivity() {
                 .setIcon(icon)
                 .setIntents(
                     arrayOf(
-                        /* Clear any existing activities, and launch the game */
                         Intent(this, MainActivity::class.java).apply {
                             action = Intent.ACTION_VIEW
                             flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
@@ -668,11 +653,8 @@ class MainActivity : BaseActivity() {
                     showImportFailToast()
                     return
                 }
-                // We have no way of knowing what encoding was used to create the zip,
-                // so just try utf-8, then cp437, then give up
                 var e = importZipWithCharset(iStream, StandardCharsets.UTF_8)
                 if (e != null) {
-                    // importZipWithCharset closes the input stream, so we have to open a new one
                     val iStream2 =
                         try {
                             contentResolver.openInputStream(uri)
@@ -717,10 +699,8 @@ class MainActivity : BaseActivity() {
         if (resultData == null) {
             return@registerForActivityResult
         }
-        // Run the import in the background to avoid blocking the UI
         Thread {
             if (resultData.size >= 10) {
-                // Give the user some notification that an import is occurring
                 runOnUiThread {
                     Toast.makeText(
                         baseContext,
@@ -735,10 +715,8 @@ class MainActivity : BaseActivity() {
             }
             resultData.forEach { importFile(it) }
 
-            // updateFiles needs to be run on the main thread, however
             runOnUiThread { updateFiles() }
 
-            // Go through the imported saves and prompt to overwrite if they already exist
             val existing = ArrayList<File>()
             val saveDir = filesDir.resolve(SAVE_DIR)
             val importDir = saveDir.resolve(IMPORTED_SAVE_SUBDIR)
