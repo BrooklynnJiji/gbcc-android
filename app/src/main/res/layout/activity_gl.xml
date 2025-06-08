@@ -8,6 +8,19 @@
     android:layout_height="match_parent"
     tools:context=".GLActivity">
 
+    <TextView
+        android:id="@+id/stepsAndPointsView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:background="#80000000"
+        android:padding="8dp"
+        android:textColor="@android:color/white"
+        android:textSize="16sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/gameboyLayout"
         android:layout_width="0dp"
@@ -31,9 +44,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:srcCompat="@drawable/empty">
-            <!-- This shouldn't be needed, but Android
-        seems to act strangely when the root view is touched
-        and ignores any further touches. -->
         </ImageView>
 
         <com.philj56.gbcc.MyGLSurfaceView
@@ -421,4 +431,6 @@
             />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
+
+
 </androidx.constraintlayout.widget.ConstraintLayout>

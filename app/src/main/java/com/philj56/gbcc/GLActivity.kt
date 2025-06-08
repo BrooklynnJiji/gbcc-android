@@ -37,6 +37,7 @@ import android.util.Log
 import android.util.Property
 import android.util.Size
 import android.view.*
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -74,7 +75,7 @@ private const val PRINTER_UPDATE_SAMPLES = 17000
 
 // --- Step Counter Constants ---
 private const val STEPS_TAG = "GLActivitySteps"
-private const val STEPS_PER_POINT = 3 // NEW: Changed name for clarity
+private const val STEPS_PER_POINT = 3
 
 private const val BUTTON_CODE_A = 0
 private const val BUTTON_CODE_B = 1
@@ -180,8 +181,8 @@ class GLActivity : BaseActivity(), SensorEventListener {
     private var initialStepCount: Float = -1f
     private var currentStepCount: Float = 0f
     private var totalStepsInSession: Int = 0
-    private var actionPoints: Int = 0 // NEW: The user's point "bank"
-    private var stepsSinceLastPoint: Int = 0 // NEW: Tracks progress towards the next point
+    private var actionPoints: Int = 0
+    private var stepsSinceLastPoint: Int = 0
     // --- End Step Counter Variables ---
 
     private lateinit var binding: ActivityGlBinding
@@ -233,7 +234,6 @@ class GLActivity : BaseActivity(), SensorEventListener {
     private external fun resetPrinter()
 
 
-    // NEW: Wrapper function to handle the point system logic.
     private fun handleButtonPress(button: Int, isPressed: Boolean) {
         // Only check/spend points when a button is pressed DOWN. Releasing is free.
         if (isPressed) {
@@ -241,17 +241,17 @@ class GLActivity : BaseActivity(), SensorEventListener {
             if (stepCounterSensor != null && actionPoints <= 0) {
                 Log.i(STEPS_TAG, "Input blocked. No action points.")
                 Toast.makeText(this, "No points! Walk to earn points to play.", Toast.LENGTH_SHORT).show()
-                return // VITAL: Block the button press from happening.
+                return
             }
 
             // If we are here, the action is allowed. Spend a point.
             if (stepCounterSensor != null) {
                 actionPoints--
                 Log.i(STEPS_TAG, "Action point spent. $actionPoints points remaining.")
+                updateStepsAndPointsDisplay()
             }
         }
 
-        // Action is allowed, so call the real external C++ function.
         press(button, isPressed)
     }
 
@@ -266,7 +266,6 @@ class GLActivity : BaseActivity(), SensorEventListener {
                 if (printerConnected()) {
                     print()
                 } else {
-                    // Something went wrong, reset the printer to be safe
                     resetPrinter()
                 }
             }
@@ -528,6 +527,13 @@ class GLActivity : BaseActivity(), SensorEventListener {
         }
     }
 
+    private fun updateStepsAndPointsDisplay() {
+        val steps = totalStepsInSession
+        val points = actionPoints
+        val message = "Steps: $steps | Points: $points"
+        binding.stepsAndPointsView?.text = message
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         delegate.localNightMode = AppCompatDelegate.MODE_NIGHT_YES
@@ -588,7 +594,17 @@ class GLActivity : BaseActivity(), SensorEventListener {
 
         // --- Initialize Step Counter ---
         Log.d(STEPS_TAG, "onCreate: Initializing step counter.")
-        stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACTIVITY_RECOGNITION),
+                REQUEST_CODE_PERMISSIONS
+            )
+        } else {
+            stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        }
+
 
         if (stepCounterSensor == null) {
             Log.e(STEPS_TAG, "Step counter sensor not available on this device!")
@@ -598,6 +614,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
             stepsSinceLastPoint = 0
             Toast.makeText(this, "Walk to earn points to play!", Toast.LENGTH_LONG).show()
         }
+        updateStepsAndPointsDisplay()
         // --- End Initialize Step Counter ---
 
         if (savedInstanceState != null) {
@@ -967,6 +984,7 @@ class GLActivity : BaseActivity(), SensorEventListener {
                         }
                     }
                 }
+                updateStepsAndPointsDisplay()
             }
         }
     }
